@@ -1,0 +1,5 @@
+test:
+  pre:
+    - go vet ./...
+  override:
+    - make test
