@@ -60,13 +60,20 @@ func (h *Handler) OnStartElement(element xml.StartElement) error {
 // OnEndElement is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
 func (h *Handler) OnEndElement(element xml.EndElement) error {
+	top := h.stack.Top().(*Node).xml.(xml.StartElement)
+	var buffer bytes.Buffer
+	if len(h.stack.Top().(*Node).xml.(xml.StartElement).Attr) > 0 {
+		for _, attr := range h.stack.Top().(*Node).xml.(xml.StartElement).Attr {
+			buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
+		}
+	}
 	if len(h.data) > 0 {
-		log.Printf("%s<%s>%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local, h.data, element.Name.Local)
+		log.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), h.data, element.Name.Local)
 		h.data = ""
 	} else if h.stack.Top() != nil && h.stack.Top().(*Node).container {
 		log.Printf("%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local)
 	} else {
-		log.Printf("%s<%s/>\n", tab(h.stack.Len()-1), element.Name.Local)
+		log.Printf("%s<%s%s/>\n", tab(h.stack.Len()-1), element.Name.Local, buffer.String())
 	}
 	h.stack.Pop()
 	return nil
