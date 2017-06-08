@@ -18,6 +18,12 @@ type Handler struct {
 	buffer bytes.Buffer
 }
 
+// Node describes a node in the XML tree.
+type Node struct {
+	xml       interface{}
+	container bool
+}
+
 // OnStartDocument clears all data structures and gets ready for parsing a new
 // XML document.
 func (h *Handler) OnStartDocument() error {
@@ -37,7 +43,17 @@ func (h *Handler) OnProcessingInstruction(element xml.ProcInst) error {
 // OnStartElement is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
 func (h *Handler) OnStartElement(element xml.StartElement) error {
-	h.stack.Push(element)
+	if h.stack.Top() != nil && !h.stack.Top().(*Node).container {
+		h.stack.Top().(*Node).container = true
+		var buffer bytes.Buffer
+		if len(h.stack.Top().(*Node).xml.(xml.StartElement).Attr) > 0 {
+			for _, attr := range h.stack.Top().(*Node).xml.(xml.StartElement).Attr {
+				buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
+			}
+		}
+		log.Printf("%s<%s%s>\n", tab(h.stack.Len()-1), h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local, buffer.String())
+	}
+	h.stack.Push(&Node{xml: element})
 	return nil
 }
 
@@ -45,10 +61,12 @@ func (h *Handler) OnStartElement(element xml.StartElement) error {
 // EventHandler interface.
 func (h *Handler) OnEndElement(element xml.EndElement) error {
 	if len(h.data) > 0 {
-		log.Printf("%s<%s>%s</%s>\n", tab(h.stack.Len()), element.Name.Local, h.data, element.Name.Local)
+		log.Printf("%s<%s>%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local, h.data, element.Name.Local)
 		h.data = ""
+	} else if h.stack.Top() != nil && h.stack.Top().(*Node).container {
+		log.Printf("%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local)
 	} else {
-		log.Printf("%s<%s/>\n", tab(h.stack.Len()), element.Name.Local)
+		log.Printf("%s<%s/>\n", tab(h.stack.Len()-1), element.Name.Local)
 	}
 	h.stack.Pop()
 	return nil

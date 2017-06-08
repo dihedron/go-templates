@@ -55,7 +55,10 @@ func (s *Stack) Pop() interface{} {
 
 // Top returns the element at the top of the Stack, without removing it.
 func (s *Stack) Top() interface{} {
-	return s.head.data
+	if s.head != nil {
+		return s.head.data
+	}
+	return nil
 }
 
 // Len returns the size of the Stack.
