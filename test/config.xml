@@ -16,10 +16,10 @@
           <triggerOpenMergeRequestOnPush>never</triggerOpenMergeRequestOnPush>
           <triggerOnNoteRequest>true</triggerOnNoteRequest>
           <noteRegex>Jenkins please retry a build</noteRegex>
-          <ciSkip>true</ciSkip>
+          <ciSkip>{{CISkip}}</ciSkip>
           <skipWorkInProgressMergeRequest>true</skipWorkInProgressMergeRequest>
           <setBuildDescription>true</setBuildDescription>
-          <branchFilterType>All</branchFilterType>
+          <branchFilterType>{{- BranchFilterType -}}</branchFilterType>
           <includeBranchesSpec></includeBranchesSpec>
           <excludeBranchesSpec></excludeBranchesSpec>
           <targetBranchRegex></targetBranchRegex>
