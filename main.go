@@ -19,22 +19,22 @@ type Job struct {
 const (
 	usage = `
        +---------------------------------------------------------+
-       |  templatise ver. 1.0.0 - Copyright © Andrea Funtò 2017  |
+       |     JTed ver. 1.0.0 - Copyright © Andrea Funtò 2017     |
        +---------------------------------------------------------+
 	   
-A utility to generate the Golang template of a Jenkins job configuration file 
-interactively for use as input to the Terraform Jenkins provider.
+A utility to generate interactively the Golang template of a Jenkins job 
+configuration file, for use as input to the Terraform Jenkins provider.
 
 usage:
-  $> templatise <config.xml> <config.tpl> <params.tf>
+  $> jted <config.xml> <config.tpl> <params.tf>
 where:
   config.xml [in]  is the original, non-generic Jenkins job configuration file
-  config.tpl [out] is the templatised version of the same file 
+  config.tpl [out] is the templatised version of the same job 
   params.tf  [out] is an example of Terraform file defining the job's traits
 `
 )
 
-// templatise <config.xml> <config.tpl> <params.tf>
+// jted <config.xml> <config.tpl> <params.tf>
 func main() {
 	if len(os.Args) != 4 {
 		fmt.Println(usage)
