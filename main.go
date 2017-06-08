@@ -1,11 +1,11 @@
 package main
 
 import (
-	"encoding/xml"
 	"fmt"
-	"io"
 	"os"
-	"strings"
+
+	"github.com/dihedron/jted/sax"
+	"github.com/dihedron/jted/stack"
 )
 
 /*
@@ -41,43 +41,58 @@ func main() {
 		os.Exit(1)
 	}
 
+	handler := &Handler{
+		stack: stack.New(),
+	}
+
 	file, _ := os.Open(os.Args[1])
-	d := xml.NewDecoder(file)
-	stack := NewStack()
-	var data string
-	for {
-		token, err := d.Token()
-		if err != nil {
-			if err == io.EOF && token == nil {
-				fmt.Printf("done reading the input XML")
+	parser := &sax.Parser{
+		EventHandler: handler,
+		ErrorHandler: handler,
+	}
+
+	parser.Parse(file)
+
+	/*
+		d := xml.NewDecoder(file)
+		stack := NewStack()
+		var data string
+		for {
+			token, err := d.Token()
+			if err != nil {
+				if err == io.EOF && token == nil {
+					fmt.Printf("done reading the input XML")
+					break
+				}
+				fmt.Printf("error reading token %v: %v\n", token, err)
 				break
 			}
-			fmt.Printf("error reading token %v: %v\n", token, err)
-			break
-		}
-		switch token := token.(type) {
-		case xml.StartElement:
-			stack.Push(token.Name.Local)
-			data = ""
-			//fmt.Printf("START: <%s>\n", token.Name.Local)
-		case xml.CharData:
-			chars := strings.TrimSpace(string(token.Copy()))
-			if len(chars) > 0 {
-				//fmt.Printf("CHAR : %q\n", data)
-				data = chars
-			}
-		case xml.EndElement:
-			top := stack.Pop()
-			if len(data) > 0 {
+			switch token := token.(type) {
+			case xml.StartElement:
+				stack.Push(token.Name.Local)
+				data = ""
+				//fmt.Printf("START: <%s>\n", token.Name.Local)
+			case xml.CharData:
+				chars := strings.TrimSpace(string(token.Copy()))
+				if len(chars) > 0 {
+					//fmt.Printf("CHAR : %q\n", data)
+					data = chars
+				}
+			case xml.EndElement:
+				top := stack.Pop()
+				if len(data) > 0 {
 
+				}
+				fmt.Printf("END  : </%s> (top: %s)\n", token.Name.Local, top.(string))
+			case xml.Comment:
+				// ignore
+			case xml.ProcInst:
+				token.
+			default:
+				fmt.Printf("token: %v (%T)\n", token, token)
 			}
-			fmt.Printf("END  : </%s> (top: %s)\n", token.Name.Local, top.(string))
-		case xml.Comment:
-			// ignore
-		default:
-			fmt.Printf("token: %v\n", token)
 		}
-	}
+	*/
 }
 
 /*

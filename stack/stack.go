@@ -1,4 +1,4 @@
-package main
+package stack
 
 import "sync"
 
@@ -14,11 +14,19 @@ type Stack struct {
 	size int
 }
 
-// NewStack creates a new Stack.
-func NewStack() *Stack {
+// New creates a new Stack.
+func New() *Stack {
 	return &Stack{
 		lock: &sync.Mutex{},
 	}
+}
+
+// Clear removes all elements from the stack.
+func (s *Stack) Clear() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.head = nil
+	s.size = 0
 }
 
 // Push adds a new element onto the Stack.

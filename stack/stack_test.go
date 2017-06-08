@@ -1,9 +1,9 @@
-package main
+package stack
 
 import "testing"
 
 func TestPushLenPop(t *testing.T) {
-	stack := NewStack()
+	stack := New()
 
 	for i := 0; i < 100; i++ {
 		stack.Push(i)
