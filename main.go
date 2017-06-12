@@ -2,7 +2,12 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
+
+	"flag"
+
+	"log"
 
 	"github.com/dihedron/jted/sax"
 	"github.com/dihedron/jted/stack"
@@ -26,26 +31,34 @@ A utility to generate interactively the Golang template of a Jenkins job
 configuration file, for use as input to the Terraform Jenkins provider.
 
 usage:
-  $> jted <config.xml> <config.tpl> <params.tf>
+  $> jted [-debug] <config.xml>
 where:
+  -debug specifies whether the log messages should be written [default: false]
   config.xml [in]  is the original, non-generic Jenkins job configuration file
-  config.tpl [out] is the templatised version of the same job 
-  params.tf  [out] is an example of Terraform file defining the job's traits
 `
 )
 
 // jted <config.xml> <config.tpl> <params.tf>
 func main() {
-	if len(os.Args) != 4 {
+
+	debug := flag.Bool("debug", false, "whether debug messages should be written out to STDERR")
+	flag.Parse()
+
+	if !*debug {
+		log.SetOutput(ioutil.Discard)
+	}
+
+	if len(flag.Args()) != 1 {
 		fmt.Println(usage)
 		os.Exit(1)
 	}
 
-	handler := &Handler{
+	handler := &PrintHandler{
 		stack: stack.New(),
 	}
 
-	file, _ := os.Open(os.Args[1])
+	file, _ := os.Open(flag.Args()[0])
+	defer file.Close()
 	parser := &sax.Parser{
 		EventHandler: handler,
 		ErrorHandler: handler,
