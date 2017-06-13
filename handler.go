@@ -1,25 +1,44 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/dihedron/jted/stack"
+	"github.com/fatih/camelcase"
 )
 
-// PrintHandler is the implementation of the sax.EventHandler and sax.ErrorHandler
+// Handler is the implementation of the sax.EventHandler and sax.ErrorHandler
 // interfaces.
-type PrintHandler struct {
+type Handler struct {
 	stack  *stack.Stack
 	data   string
 	buffer bytes.Buffer
+	all    bool
+	tpl    io.Writer
+	hcl    io.Writer
+}
+
+// Close closes the underlying file descriptors.
+func (h *Handler) Close() {
+	if h.hcl != nil {
+		defer h.hcl.(*bufio.Writer).Flush()
+	}
+	if h.tpl != nil {
+		defer h.tpl.(*bufio.Writer).Flush()
+	}
 }
 
 // OnStartDocument clears all data structures and gets ready for parsing a new
-// XML document.
-func (h *PrintHandler) OnStartDocument() error {
+// XML document; this includes opening a file for the HCL example and, optionally,
+// a file for the template it is not embedded/inlined in the HCL file; the naming
+// convention is the following: both files have the same base name as the config.xml
+// with the .hcl and .tpl extensions.
+func (h *Handler) OnStartDocument() error {
 	h.stack.Clear()
 	h.data = ""
 	h.buffer.Reset()
@@ -28,14 +47,15 @@ func (h *PrintHandler) OnStartDocument() error {
 
 // OnProcessingInstruction is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
-func (h *PrintHandler) OnProcessingInstruction(element xml.ProcInst) error {
+func (h *Handler) OnProcessingInstruction(element xml.ProcInst) error {
 	fmt.Printf("<?%s %s?>\n", element.Target, string(element.Inst))
+	fmt.Fprintf(h.tpl, "<?%s %s?>\n", element.Target, string(element.Inst))
 	return nil
 }
 
 // OnStartElement is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
-func (h *PrintHandler) OnStartElement(element xml.StartElement) error {
+func (h *Handler) OnStartElement(element xml.StartElement) error {
 	if h.stack.Top() != nil && !h.stack.Top().(*Node).container {
 		h.stack.Top().(*Node).container = true
 		var buffer bytes.Buffer
@@ -46,10 +66,10 @@ func (h *PrintHandler) OnStartElement(element xml.StartElement) error {
 				} else {
 					buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
 				}
-
 			}
 		}
 		fmt.Printf("%s<%s%s>\n", tab(h.stack.Len()-1), bold(h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local), buffer.String())
+		fmt.Fprintf(h.tpl, "%s<%s%s>\n", tab(h.stack.Len()-1), h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local, buffer.String())
 	}
 	h.stack.Push(&Node{xml: element})
 	return nil
@@ -57,7 +77,7 @@ func (h *PrintHandler) OnStartElement(element xml.StartElement) error {
 
 // OnEndElement is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
-func (h *PrintHandler) OnEndElement(element xml.EndElement) error {
+func (h *Handler) OnEndElement(element xml.EndElement) error {
 	top := h.stack.Top().(*Node).xml.(xml.StartElement)
 	var buffer bytes.Buffer
 	if len(h.stack.Top().(*Node).xml.(xml.StartElement).Attr) > 0 {
@@ -67,9 +87,25 @@ func (h *PrintHandler) OnEndElement(element xml.EndElement) error {
 	}
 	if len(h.data) > 0 {
 		if pattern.MatchString(h.data) {
+			fmt.Fprintf(h.tpl, "%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), h.data, element.Name.Local)
 			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green(h.data), bold(element.Name.Local))
+			// TODO: output to HCL too
 		} else {
-			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), red(h.data), bold(element.Name.Local))
+			// calculate the name of the parameter
+			var tokens []string
+			if strings.Contains(top.Name.Local, ".") {
+				for _, token := range strings.Split(top.Name.Local, ".") {
+					tokens = append(tokens, strings.Title(token))
+				}
+			} else {
+				tokens = camelcase.Split(top.Name.Local)
+				tokens = append([]string{strings.Title(tokens[0])}, tokens[1:]...)
+			}
+			parameter := strings.Join(tokens, "")
+			// TODO: insert into map parameter -> h.data
+			fmt.Fprintf(h.tpl, "%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, bold(element.Name.Local))
+			fmt.Printf("%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green(parameter), bold(element.Name.Local))
+			// TODO: output to HCL too
 		}
 		h.data = ""
 	} else if h.stack.Top() != nil && h.stack.Top().(*Node).container {
@@ -84,7 +120,7 @@ func (h *PrintHandler) OnEndElement(element xml.EndElement) error {
 
 // OnCharacterData is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
-func (h *PrintHandler) OnCharacterData(element xml.CharData) error {
+func (h *Handler) OnCharacterData(element xml.CharData) error {
 	data := strings.TrimSpace(string(element))
 	if len(data) > 0 {
 		h.data = data
@@ -94,18 +130,18 @@ func (h *PrintHandler) OnCharacterData(element xml.CharData) error {
 
 // OnComment is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
-func (h *PrintHandler) OnComment(element xml.Comment) error {
+func (h *Handler) OnComment(element xml.Comment) error {
 	return nil
 }
 
 // OnEndDocument is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
-func (h *PrintHandler) OnEndDocument() error {
+func (h *Handler) OnEndDocument() error {
 	return nil
 }
 
 // OnError is the default implementation of the corresponding ErrorHandler
 // interface; it simply forwards any error to the Parser.
-func (h *PrintHandler) OnError(err error) error {
+func (h *Handler) OnError(err error) error {
 	return err
 }
