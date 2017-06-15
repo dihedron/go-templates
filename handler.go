@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/dihedron/jted/stack"
-	"github.com/fatih/camelcase"
 )
 
 // Handler is the implementation of the sax.EventHandler and sax.ErrorHandler
@@ -56,20 +55,22 @@ func (h *Handler) OnProcessingInstruction(element xml.ProcInst) error {
 // OnStartElement is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
 func (h *Handler) OnStartElement(element xml.StartElement) error {
+	// if there is already an open tag on the stack, then the current tag
+	// is contained therein and we can mark the top of the stack as a
+	// "container" node; this allows us to treat the parent node as a <tag>
+	// </tag> pair and NEVER collapse it to <tag/>, which we only do for
+	// empty leaf tags.
 	if h.stack.Top() != nil && !h.stack.Top().(*Node).container {
 		h.stack.Top().(*Node).container = true
 		var buffer bytes.Buffer
+		// if the current node has attributes, format them
 		if len(h.stack.Top().(*Node).xml.(xml.StartElement).Attr) > 0 {
 			for _, attr := range h.stack.Top().(*Node).xml.(xml.StartElement).Attr {
-				if pattern.MatchString(attr.Value) {
-					buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, green(attr.Value)))
-				} else {
-					buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
-				}
+				buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
 			}
 		}
-		fmt.Printf("%s<%s%s>\n", tab(h.stack.Len()-1), bold(h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local), buffer.String())
 		fmt.Fprintf(h.tpl, "%s<%s%s>\n", tab(h.stack.Len()-1), h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local, buffer.String())
+		fmt.Printf("%s<%s%s>\n", tab(h.stack.Len()-1), bold(h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local), buffer.String())
 	}
 	h.stack.Push(&Node{xml: element})
 	return nil
@@ -87,32 +88,33 @@ func (h *Handler) OnEndElement(element xml.EndElement) error {
 	}
 	if len(h.data) > 0 {
 		if pattern.MatchString(h.data) {
+			// if the value has already been parameterised "by hand", dump it as is
 			fmt.Fprintf(h.tpl, "%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), h.data, element.Name.Local)
 			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green(h.data), bold(element.Name.Local))
 			// TODO: output to HCL too
 		} else {
-			// calculate the name of the parameter
-			var tokens []string
-			if strings.Contains(top.Name.Local, ".") {
-				for _, token := range strings.Split(top.Name.Local, ".") {
-					tokens = append(tokens, strings.Title(token))
-				}
-			} else {
-				tokens = camelcase.Split(top.Name.Local)
-				tokens = append([]string{strings.Title(tokens[0])}, tokens[1:]...)
-			}
-			parameter := strings.Join(tokens, "")
+			// otherwise calculate the name of the parameter
+			parameter := templatise(top.Name.Local)
 			// TODO: insert into map parameter -> h.data
-			fmt.Fprintf(h.tpl, "%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, bold(element.Name.Local))
-			fmt.Printf("%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green(parameter), bold(element.Name.Local))
+			fmt.Fprintf(h.tpl, "%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local)
+			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- "+parameter+" -}}"), bold(element.Name.Local))
 			// TODO: output to HCL too
 		}
 		h.data = ""
 	} else if h.stack.Top() != nil && h.stack.Top().(*Node).container {
+		fmt.Fprintf(h.tpl, "%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local)
 		fmt.Printf("%s</%s>\n", tab(h.stack.Len()-1), bold(element.Name.Local))
 	} else {
-		//log.Printf("%s<%s%s/>\n", tab(h.stack.Len()-1), element.Name.Local, buffer.String())
-		fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), red("???"), bold(element.Name.Local))
+		if h.all {
+			parameter := templatise(top.Name.Local)
+			fmt.Fprintf(h.tpl, "%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local)
+			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- "+parameter+" -}}"), bold(element.Name.Local))
+
+		} else {
+			//log.Printf("%s<%s%s/>\n", tab(h.stack.Len()-1), element.Name.Local, buffer.String())
+			fmt.Fprintf(h.tpl, "%s<%s%s/>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String())
+			fmt.Printf("%s<%s%s/>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String())
+		}
 	}
 	h.stack.Pop()
 	return nil
