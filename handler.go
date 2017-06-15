@@ -11,7 +11,7 @@ import (
 	"github.com/dihedron/jted/stack"
 )
 
-// Handler is the implementation of the sax.EventHandler and sax.ErrorHandler
+// Handler is an implementation of the sax.EventHandler and sax.ErrorHandler
 // interfaces.
 type Handler struct {
 	stack  *stack.Stack
@@ -34,7 +34,7 @@ func (h *Handler) Close() {
 
 // OnStartDocument clears all data structures and gets ready for parsing a new
 // XML document; this includes opening a file for the HCL example and, optionally,
-// a file for the template it is not embedded/inlined in the HCL file; the naming
+// a file for the template if it is not embedded/inlined in the HCL file; the naming
 // convention is the following: both files have the same base name as the config.xml
 // with the .hcl and .tpl extensions.
 func (h *Handler) OnStartDocument() error {
@@ -44,16 +44,17 @@ func (h *Handler) OnStartDocument() error {
 	return nil
 }
 
-// OnProcessingInstruction is the default, do-nothing implementation of the corresponding
-// EventHandler interface.
+// OnProcessingInstruction simply prints out the processing instructions as is.
 func (h *Handler) OnProcessingInstruction(element xml.ProcInst) error {
 	fmt.Printf("<?%s %s?>\n", element.Target, string(element.Inst))
 	fmt.Fprintf(h.tpl, "<?%s %s?>\n", element.Target, string(element.Inst))
 	return nil
 }
 
-// OnStartElement is the default, do-nothing implementation of the corresponding
-// EventHandler interface.
+// OnStartElement pushes the element onto the stak; if the element is not
+// the first on the stack, it marks its parent element, currently at the
+// top of the stack, as a "container" so it can be treated accordingly: it
+// will never be collapsed to a <tag/> because it is not empty.
 func (h *Handler) OnStartElement(element xml.StartElement) error {
 	// if there is already an open tag on the stack, then the current tag
 	// is contained therein and we can mark the top of the stack as a
