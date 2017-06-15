@@ -63,8 +63,9 @@ func (h *Handler) OnStartElement(element xml.StartElement) error {
 	// empty leaf tags.
 	if h.stack.Top() != nil && !h.stack.Top().(*Node).container {
 		h.stack.Top().(*Node).container = true
+
 		var buffer bytes.Buffer
-		// if the current node has attributes, format them
+		// if the parent node has attributes, format them, then print it out
 		if len(h.stack.Top().(*Node).xml.(xml.StartElement).Attr) > 0 {
 			for _, attr := range h.stack.Top().(*Node).xml.(xml.StartElement).Attr {
 				buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
