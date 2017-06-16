@@ -101,9 +101,9 @@ func (h *Handler) OnEndElement(element xml.EndElement) error {
 		} else {
 			// otherwise calculate the name of the parameter
 			parameter := templatise(top.Name.Local)
-			h.template.WriteString(fmt.Sprintf("%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
+			h.template.WriteString(fmt.Sprintf("%s<%s%s>{{- .parameters.%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
 			h.parameters[parameter] = h.data
-			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- "+parameter+" -}}"), bold(element.Name.Local))
+			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- .parameters."+parameter+" -}}"), bold(element.Name.Local))
 		}
 		h.data = ""
 	} else if h.stack.Top() != nil && h.stack.Top().(*Node).container {
@@ -112,9 +112,9 @@ func (h *Handler) OnEndElement(element xml.EndElement) error {
 	} else {
 		if h.all {
 			parameter := templatise(top.Name.Local)
-			h.template.WriteString(fmt.Sprintf("%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
+			h.template.WriteString(fmt.Sprintf("%s<%s%s>{{- .parameters.%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
 			h.parameters[parameter] = "<value>"
-			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- "+parameter+" -}}"), bold(element.Name.Local))
+			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- .parameters."+parameter+" -}}"), bold(element.Name.Local))
 		} else {
 			h.template.WriteString(fmt.Sprintf("%s<%s%s/>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String()))
 			fmt.Printf("%s<%s%s/>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String())
