@@ -14,12 +14,14 @@ import (
 // Handler is an implementation of the sax.EventHandler and sax.ErrorHandler
 // interfaces.
 type Handler struct {
-	stack  *stack.Stack
-	data   string
-	buffer bytes.Buffer
-	all    bool
-	tpl    io.Writer
-	hcl    io.Writer
+	stack      *stack.Stack
+	data       string
+	buffer     bytes.Buffer
+	all        bool              // if even empty tags should be parameterised
+	template   bytes.Buffer      // where the template goes
+	parameters map[string]string // where the parameters go
+	tpl        io.Writer         // the (possibly nil) template file
+	hcl        io.Writer         // the HCL file
 }
 
 // Close closes the underlying file descriptors.
@@ -40,14 +42,16 @@ func (h *Handler) Close() {
 func (h *Handler) OnStartDocument() error {
 	h.stack.Clear()
 	h.data = ""
+	h.parameters = map[string]string{}
 	h.buffer.Reset()
+	h.template.Reset()
 	return nil
 }
 
 // OnProcessingInstruction simply prints out the processing instructions as is.
 func (h *Handler) OnProcessingInstruction(element xml.ProcInst) error {
+	h.template.WriteString(fmt.Sprintf("<?%s %s?>\n", element.Target, string(element.Inst)))
 	fmt.Printf("<?%s %s?>\n", element.Target, string(element.Inst))
-	fmt.Fprintf(h.tpl, "<?%s %s?>\n", element.Target, string(element.Inst))
 	return nil
 }
 
@@ -71,7 +75,7 @@ func (h *Handler) OnStartElement(element xml.StartElement) error {
 				buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
 			}
 		}
-		fmt.Fprintf(h.tpl, "%s<%s%s>\n", tab(h.stack.Len()-1), h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local, buffer.String())
+		h.template.WriteString(fmt.Sprintf("%s<%s%s>\n", tab(h.stack.Len()-1), h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local, buffer.String()))
 		fmt.Printf("%s<%s%s>\n", tab(h.stack.Len()-1), bold(h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local), buffer.String())
 	}
 	h.stack.Push(&Node{xml: element})
@@ -91,30 +95,28 @@ func (h *Handler) OnEndElement(element xml.EndElement) error {
 	if len(h.data) > 0 {
 		if pattern.MatchString(h.data) {
 			// if the value has already been parameterised "by hand", dump it as is
-			fmt.Fprintf(h.tpl, "%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), h.data, element.Name.Local)
+			h.template.WriteString(fmt.Sprintf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), h.data, element.Name.Local))
+			h.parameters[h.data] = "<value>"
 			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green(h.data), bold(element.Name.Local))
-			// TODO: output to HCL too
 		} else {
 			// otherwise calculate the name of the parameter
 			parameter := templatise(top.Name.Local)
-			// TODO: insert into map parameter -> h.data
-			fmt.Fprintf(h.tpl, "%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local)
+			h.template.WriteString(fmt.Sprintf("%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
+			h.parameters[parameter] = h.data
 			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- "+parameter+" -}}"), bold(element.Name.Local))
-			// TODO: output to HCL too
 		}
 		h.data = ""
 	} else if h.stack.Top() != nil && h.stack.Top().(*Node).container {
-		fmt.Fprintf(h.tpl, "%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local)
+		h.template.WriteString(fmt.Sprintf("%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local))
 		fmt.Printf("%s</%s>\n", tab(h.stack.Len()-1), bold(element.Name.Local))
 	} else {
 		if h.all {
 			parameter := templatise(top.Name.Local)
-			fmt.Fprintf(h.tpl, "%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local)
+			h.template.WriteString(fmt.Sprintf("%s<%s%s>{{- %s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
+			h.parameters[parameter] = "<value>"
 			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- "+parameter+" -}}"), bold(element.Name.Local))
-
 		} else {
-			//log.Printf("%s<%s%s/>\n", tab(h.stack.Len()-1), element.Name.Local, buffer.String())
-			fmt.Fprintf(h.tpl, "%s<%s%s/>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String())
+			h.template.WriteString(fmt.Sprintf("%s<%s%s/>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String()))
 			fmt.Printf("%s<%s%s/>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String())
 		}
 	}
@@ -141,6 +143,13 @@ func (h *Handler) OnComment(element xml.Comment) error {
 // OnEndDocument is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
 func (h *Handler) OnEndDocument() error {
+	if h.tpl != nil {
+		fmt.Fprint(h.tpl, h.template.String())
+	}
+
+	for k, v := range h.parameters {
+		fmt.Printf("%q => %q\n", k, v)
+	}
 	return nil
 }
 

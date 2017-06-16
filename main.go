@@ -67,9 +67,10 @@ func main() {
 	defer hcl.Close()
 
 	handler := &Handler{
-		stack: stack.New(),
-		all:   *all,
-		hcl:   bufio.NewWriter(hcl),
+		stack:      stack.New(),
+		all:        *all,
+		parameters: map[string]string{},
+		hcl:        bufio.NewWriter(hcl),
 	}
 	if tpl != nil {
 		handler.tpl = bufio.NewWriter(tpl)
