@@ -1,11 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"io"
+	"strconv"
 	"strings"
 
 	"github.com/dihedron/jted/stack"
@@ -14,24 +13,13 @@ import (
 // Handler is an implementation of the sax.EventHandler and sax.ErrorHandler
 // interfaces.
 type Handler struct {
-	stack      *stack.Stack
-	data       string
-	buffer     bytes.Buffer
-	all        bool              // if even empty tags should be parameterised
-	template   bytes.Buffer      // where the template goes
-	parameters map[string]string // where the parameters go
-	tpl        io.Writer         // the (possibly nil) template file
-	hcl        io.Writer         // the HCL file
-}
-
-// Close closes the underlying file descriptors.
-func (h *Handler) Close() {
-	if h.hcl != nil {
-		defer h.hcl.(*bufio.Writer).Flush()
-	}
-	if h.tpl != nil {
-		defer h.tpl.(*bufio.Writer).Flush()
-	}
+	IncludeEmptyValues bool              // if even empty tags should be parameterised
+	EmbedConfigXML     bool              // if the confg.xml template should be inlined
+	ConfigXML          bytes.Buffer      // the buffer where the config.xml template goes
+	HCL                bytes.Buffer      // the buffer where the HCL goes
+	stack              *stack.Stack      // the SAX internal stack
+	currentValue       string            // the value of the current parameter
+	parameters         map[string]string // where the parameters go
 }
 
 // OnStartDocument clears all data structures and gets ready for parsing a new
@@ -41,21 +29,31 @@ func (h *Handler) Close() {
 // with the .hcl and .tpl extensions.
 func (h *Handler) OnStartDocument() error {
 	h.stack.Clear()
-	h.data = ""
+	h.currentValue = ""
+
 	h.parameters = map[string]string{}
-	h.buffer.Reset()
-	h.template.Reset()
+	h.HCL.Reset()
+	h.HCL.WriteString(`
+\*
+ * Jenkins job definition
+ */
+resource "jenkins_job" "<job name here>" {	
+    name                               = "<job name here>"
+    display_name                       = "<[optional] job display name here>"
+    description                        = "<job description here>"
+    disabled                           = false	
+`)
+	h.ConfigXML.Reset()
 	return nil
 }
 
 // OnProcessingInstruction simply prints out the processing instructions as is.
 func (h *Handler) OnProcessingInstruction(element xml.ProcInst) error {
-	h.template.WriteString(fmt.Sprintf("<?%s %s?>\n", element.Target, string(element.Inst)))
-	fmt.Printf("<?%s %s?>\n", element.Target, string(element.Inst))
+	h.ConfigXML.WriteString(fmt.Sprintf("<?%s %s?>\n", element.Target, string(element.Inst)))
 	return nil
 }
 
-// OnStartElement pushes the element onto the stak; if the element is not
+// OnStartElement pushes the element onto the stack; if the element is not
 // the first on the stack, it marks its parent element, currently at the
 // top of the stack, as a "container" so it can be treated accordingly: it
 // will never be collapsed to a <tag/> because it is not empty.
@@ -75,8 +73,7 @@ func (h *Handler) OnStartElement(element xml.StartElement) error {
 				buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
 			}
 		}
-		h.template.WriteString(fmt.Sprintf("%s<%s%s>\n", tab(h.stack.Len()-1), h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local, buffer.String()))
-		fmt.Printf("%s<%s%s>\n", tab(h.stack.Len()-1), bold(h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local), buffer.String())
+		h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>\n", tab(h.stack.Len()-1), h.stack.Top().(*Node).xml.(xml.StartElement).Name.Local, buffer.String()))
 	}
 	h.stack.Push(&Node{xml: element})
 	return nil
@@ -92,32 +89,39 @@ func (h *Handler) OnEndElement(element xml.EndElement) error {
 			buffer.WriteString(fmt.Sprintf(" %s=\"%s\"", attr.Name.Local, attr.Value))
 		}
 	}
-	if len(h.data) > 0 {
-		if pattern.MatchString(h.data) {
+	if len(h.currentValue) > 0 {
+		if pattern.MatchString(h.currentValue) {
 			// if the value has already been parameterised "by hand", dump it as is
-			h.template.WriteString(fmt.Sprintf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), h.data, element.Name.Local))
-			h.parameters[h.data] = "<value>"
-			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green(h.data), bold(element.Name.Local))
+			h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), h.currentValue, element.Name.Local))
+			h.parameters[h.currentValue] = "<no value provided>"
 		} else {
 			// otherwise calculate the name of the parameter
 			parameter := templatise(top.Name.Local)
-			h.template.WriteString(fmt.Sprintf("%s<%s%s>{{- .parameters.%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
-			h.parameters[parameter] = h.data
-			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- .parameters."+parameter+" -}}"), bold(element.Name.Local))
+			if isSpecialParameter(parameter) {
+				// if it is one of the "top level", special paramweters we do not prefix
+				// it with ".parameters" and we do not capitalise it (use original form)
+				h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>{{- .%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), top.Name.Local, element.Name.Local))
+			} else {
+				h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>{{- .parameters.%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
+			}
+			h.parameters[parameter] = h.currentValue
 		}
-		h.data = ""
+		h.currentValue = ""
 	} else if h.stack.Top() != nil && h.stack.Top().(*Node).container {
-		h.template.WriteString(fmt.Sprintf("%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local))
-		fmt.Printf("%s</%s>\n", tab(h.stack.Len()-1), bold(element.Name.Local))
+		h.ConfigXML.WriteString(fmt.Sprintf("%s</%s>\n", tab(h.stack.Len()-1), element.Name.Local))
 	} else {
-		if h.all {
+		if h.IncludeEmptyValues {
 			parameter := templatise(top.Name.Local)
-			h.template.WriteString(fmt.Sprintf("%s<%s%s>{{- .parameters.%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
-			h.parameters[parameter] = "<value>"
-			fmt.Printf("%s<%s%s>%s</%s>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String(), green("{{- .parameters."+parameter+" -}}"), bold(element.Name.Local))
+			if isSpecialParameter(parameter) {
+				// if it is one of the "top level", special paramweters we do not prefix
+				// it with ".parameters" and we do not capitalise it (use original form)
+				h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>{{- .%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), top.Name.Local, element.Name.Local))
+			} else {
+				h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>{{- .parameters.%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
+			}
+			h.parameters[parameter] = "<no value provided>"
 		} else {
-			h.template.WriteString(fmt.Sprintf("%s<%s%s/>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String()))
-			fmt.Printf("%s<%s%s/>\n", tab(h.stack.Len()-1), bold(top.Name.Local), buffer.String())
+			h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s/>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String()))
 		}
 	}
 	h.stack.Pop()
@@ -129,7 +133,7 @@ func (h *Handler) OnEndElement(element xml.EndElement) error {
 func (h *Handler) OnCharacterData(element xml.CharData) error {
 	data := strings.TrimSpace(string(element))
 	if len(data) > 0 {
-		h.data = data
+		h.currentValue = data
 	}
 	return nil
 }
@@ -143,13 +147,28 @@ func (h *Handler) OnComment(element xml.Comment) error {
 // OnEndDocument is the default, do-nothing implementation of the corresponding
 // EventHandler interface.
 func (h *Handler) OnEndDocument() error {
-	if h.tpl != nil {
-		fmt.Fprint(h.tpl, h.template.String())
+	if len(h.parameters) > 0 {
+		h.HCL.WriteString(fmt.Sprintf("\t%-40s= {\n", "parameters"))
+		for k, v := range h.parameters {
+			if _, err := strconv.ParseInt(v, 10, 64); err == nil {
+				h.HCL.WriteString(fmt.Sprintf("\t\t%-36s= %s,\n", k, v))
+			} else if b, err := strconv.ParseBool(v); err == nil {
+				h.HCL.WriteString(fmt.Sprintf("\t\t%-36s= %t,\n", k, b))
+			} else {
+				h.HCL.WriteString(fmt.Sprintf("\t\t%-36s= \"%s\",\n", k, v))
+			}
+		}
+		h.HCL.WriteString("\t}\n")
 	}
-
-	for k, v := range h.parameters {
-		fmt.Printf("%q => %q\n", k, v)
+	if h.EmbedConfigXML {
+		// config.xml template must be inlined
+		h.HCL.WriteString(fmt.Sprintf("\t%-40s=<<EOF\n", "template"))
+		h.HCL.WriteString(h.ConfigXML.String())
+		h.HCL.WriteString("EOF\n")
+	} else {
+		h.HCL.WriteString(fmt.Sprintf("\t%-40s= \"file://%%s\"\n", "template"))
 	}
+	h.HCL.WriteString("}")
 	return nil
 }
 
@@ -157,4 +176,16 @@ func (h *Handler) OnEndDocument() error {
 // interface; it simply forwards any error to the Parser.
 func (h *Handler) OnError(err error) error {
 	return err
+}
+
+func isSpecialParameter(name string) bool {
+	// Name is treated differently because it is (or should) never be in the config XML
+	// and is usually sent to the server in the POST request; it appears in some
+	// configuration tags though, so it mnust be treated as an ordinary parameter
+	for _, special := range []string{ /*"Name",*/ "DisplayName", "Disabled", "Template", "Description"} {
+		if name == special {
+			return true
+		}
+	}
+	return false
 }

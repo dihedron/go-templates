@@ -2,14 +2,10 @@ package main
 
 import (
 	"bufio"
-	"fmt"
-	"io/ioutil"
-	"os"
-
 	"flag"
-
+	"fmt"
 	"log"
-
+	"os"
 	"path/filepath"
 
 	"github.com/dihedron/jted/sax"
@@ -34,9 +30,15 @@ A utility to generate interactively the Golang template of a Jenkins job
 configuration file, for use as input to the Terraform Jenkins provider.
 
 usage:
-  $> jted [-debug] <config.xml>
+  $> jted [-include-empty-values] [-embed-template] <config.xml>
 where:
-  -debug specifies whether the log messages should be written [default: false]
+  -include-empty-values
+    specifies whether empty tags in the original config.xml should be used
+	to generate values, that is <tag></tag> or <tag/> will become
+	<tag>{{- Tag -}}</tag> [default: false, that is omit empty tags]
+  -embed-template
+    specifies whether the generated config.xml template should be embedded 
+	in the generated HCL (.tf) file as a template field [default: false]
   config.xml [in]  is the original, non-generic Jenkins job configuration file
 `
 )
@@ -44,77 +46,86 @@ where:
 // jted <config.xml> <config.tpl> <params.tf>
 func main() {
 
-	debug := flag.Bool("debug", false, "whether debug messages should be written out to STDERR")
-	all := flag.Bool("all", false, "write all potential values, even empty ones [default: false]")
-	inline := flag.Bool("inline", false, "produce an HCL file with inlined template [default: false]")
+	includeEmptyValues := flag.Bool("include-empty-values", false, "write all potential values, even empty ones [default: false]")
+	embedTemplate := flag.Bool("embed-template", false, "produce an HCL file with inlined template [default: false]")
 	flag.Parse()
-
-	if !*debug {
-		log.SetOutput(ioutil.Discard)
-	}
 
 	if len(flag.Args()) != 1 {
 		fmt.Println(usage)
 		os.Exit(1)
 	}
 
-	var err error
-	var hcl, tpl *os.File
-	if hcl, tpl, err = openFiles(flag.Args()[0], *inline); err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening output files: %v\n", err)
-		os.Exit(1)
-	}
-	defer hcl.Close()
-
 	handler := &Handler{
-		stack:      stack.New(),
-		all:        *all,
-		parameters: map[string]string{},
-		hcl:        bufio.NewWriter(hcl),
+		IncludeEmptyValues: *includeEmptyValues,
+		EmbedConfigXML:     *embedTemplate,
+		stack:              stack.New(),
+		parameters:         map[string]string{},
 	}
-	if tpl != nil {
-		handler.tpl = bufio.NewWriter(tpl)
-		defer tpl.Close()
-	}
-	defer handler.Close()
 
 	parser := &sax.Parser{
 		EventHandler: handler,
 		ErrorHandler: handler,
 	}
 
-	file, _ := os.Open(flag.Args()[0])
+	file, err := os.Open(flag.Args()[0])
+	if err != nil {
+		log.Fatalf("Error opening input file: %v", err)
+	}
 	defer file.Close()
-	parser.Parse(file)
+	err = parser.Parse(file)
+	if err != nil {
+		log.Fatalf("Error parsing input file: %v", err)
+	}
+
+	hcl, err := openFile(getHCLFileName(flag.Args()[0]))
+	if err != nil {
+		log.Fatalf("Error opening HCL for writing: %v", err)
+	}
+	defer hcl.Close()
+
+	hclWriter := bufio.NewWriter(hcl)
+	if handler.EmbedConfigXML {
+		// if the template is embedded, then only the HCL should be written out as is,
+		// it contains everything already
+		hclWriter.Write(handler.HCL.Bytes())
+		hclWriter.Flush()
+	} else {
+		// if the tempate is not embedded, the HCL must be written out after replacing
+		// the name of the tpl file (a "%s" was left by the handler in the buffer for
+		// this purpose)...
+		hclWriter.WriteString(fmt.Sprintf(handler.HCL.String(), getConfigXMLTemplateFileName(flag.Args()[0])))
+		hclWriter.Flush()
+
+		// ... and then the template must be written out too to its own writer
+		tpl, err := openFile(getConfigXMLTemplateFileName(flag.Args()[0]))
+		if err != nil {
+			log.Fatalf("Error opening config.xml template file for writing: %v", err)
+		}
+		defer tpl.Close()
+		tplWriter := bufio.NewWriter(tpl)
+
+		tplWriter.Write(handler.ConfigXML.Bytes())
+		tplWriter.Flush()
+	}
 }
 
-func openFiles(path string, inline bool) (hcl *os.File, tpl *os.File, err error) {
+func getHCLFileName(configXML string) string {
+	return filepath.Dir(configXML) + "/" + filepath.Base(configXML) + ".hcl"
+}
 
-	dir := filepath.Dir(path)
-	hclPath := dir + "/" + filepath.Base(path) + ".hcl"
+func getConfigXMLTemplateFileName(configXML string) string {
+	return filepath.Dir(configXML) + "/" + filepath.Base(configXML) + ".tpl"
+}
 
-	if _, err = os.Stat(hclPath); err == nil {
-		fmt.Fprintf(os.Stderr, "File %s exists already\n", hclPath)
-		err = fmt.Errorf("File %s exists already", hclPath)
+func openFile(path string) (file *os.File, err error) {
+	if _, err = os.Stat(path); err == nil {
+		fmt.Fprintf(os.Stderr, "File %s exists already\n", path)
+		err = fmt.Errorf("File %s exists already", path)
 		return
 	}
-
-	if hcl, err = os.Create(hclPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", hclPath, err)
+	if file, err = os.Create(path); err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", path, err)
 		return
-	}
-
-	if !inline {
-		tplPath := dir + "/" + filepath.Base(path) + ".tpl"
-		if _, err = os.Stat(tplPath); err == nil {
-			fmt.Fprintf(os.Stderr, "File %s exists already\n", tplPath)
-			err = fmt.Errorf("File %s exists already", hclPath)
-			return
-		}
-		if tpl, err = os.Create(tplPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", tplPath, err)
-			return
-		}
 	}
 	return
 }

@@ -3,7 +3,6 @@ package sax
 import (
 	"encoding/xml"
 	"io"
-	"log"
 )
 
 // EventHandler is the interface definig the methods that handle relevant SAX
@@ -61,21 +60,21 @@ loop:
 		token, err := d.Token()
 		switch {
 		case err == io.EOF && token == nil:
-			log.Printf("[DEBUG] sax::parser - done reading the input XML")
+			// done reading the document
 			err = p.EventHandler.OnEndDocument()
 			break loop
 		case err != nil:
-			log.Printf("[WARN] sax::parser - error reading the input XML: %v", err)
+			// error reading the input XML, invoking error handler
 			if p.ErrorHandler != nil {
 				err = p.ErrorHandler.OnError(err)
 				if err != nil {
-					log.Printf("[ERROR] sax::parser - error handler confirmed the error: %v", err)
+					// error handler confirmed the error, aborting
 					break loop
 				} else {
-					log.Printf("[INFO] sax::parser - error handler suppressed the error")
+					// error handler suppressed the error, we can continue
 				}
 			} else {
-				log.Printf("[ERROR] sax::parser - no error handler installed, bailing out with an error: %v", err)
+				// no error handler installed, bailing out with the parser error
 				break loop
 			}
 		default:
@@ -91,7 +90,7 @@ loop:
 			case xml.ProcInst:
 				p.EventHandler.OnProcessingInstruction(token.Copy())
 			default:
-				log.Printf("[ERROR] sax::parser - unsupported token type %T: %v", token, token)
+				// unsupported token type???
 			}
 		}
 	}
