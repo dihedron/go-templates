@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/fatih/camelcase"
-	"github.com/fatih/color"
 )
 
 // Node describes a node in the XML tree.
@@ -15,21 +14,10 @@ type Node struct {
 	container bool
 }
 
-// Colorf is the type of string formatting functions.
-type Colorf func(a ...interface{}) string
-
-var (
-	pattern *regexp.Regexp
-	bold    Colorf
-	green   Colorf
-	red     Colorf
-)
+var pattern *regexp.Regexp
 
 func init() {
 	pattern, _ = regexp.Compile(`^{{[^}}]*}}$`)
-	bold = color.New(color.FgWhite, color.Bold).SprintFunc()
-	green = color.New(color.FgGreen).SprintFunc()
-	red = color.New(color.FgRed).SprintFunc()
 }
 
 // tab creates a string with the given number of tabs; each tab has a size of
