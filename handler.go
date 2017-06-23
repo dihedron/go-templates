@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -38,10 +39,10 @@ func (h *Handler) OnStartDocument() error {
  * Jenkins job definition
  */
 resource "jenkins_job" "<job name here>" {	
-    name                               = "<job name here>"
-    display_name                       = "<[optional] job display name here>"
-    description                        = "<job description here>"
-    disabled                           = false	
+    name                                = "<job name here>"
+    display_name                        = "<[optional] job display name here>"
+    description                         = "<job description here>"
+    disabled                            = false	
 `)
 	h.ConfigXML.Reset()
 	return nil
@@ -103,8 +104,9 @@ func (h *Handler) OnEndElement(element xml.EndElement) error {
 				h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>{{- .%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), top.Name.Local, element.Name.Local))
 			} else {
 				h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>{{- .parameters.%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
+				h.parameters[parameter] = h.currentValue
 			}
-			h.parameters[parameter] = h.currentValue
+
 		}
 		h.currentValue = ""
 	} else if h.stack.Top() != nil && h.stack.Top().(*Node).container {
@@ -118,8 +120,8 @@ func (h *Handler) OnEndElement(element xml.EndElement) error {
 				h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>{{- .%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), top.Name.Local, element.Name.Local))
 			} else {
 				h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s>{{- .parameters.%s -}}</%s>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String(), parameter, element.Name.Local))
+				h.parameters[parameter] = "<no value provided>"
 			}
-			h.parameters[parameter] = "<no value provided>"
 		} else {
 			h.ConfigXML.WriteString(fmt.Sprintf("%s<%s%s/>\n", tab(h.stack.Len()-1), top.Name.Local, buffer.String()))
 		}
@@ -148,8 +150,16 @@ func (h *Handler) OnComment(element xml.Comment) error {
 // EventHandler interface.
 func (h *Handler) OnEndDocument() error {
 	if len(h.parameters) > 0 {
-		h.HCL.WriteString(fmt.Sprintf("\t%-40s= {\n", "parameters"))
-		for k, v := range h.parameters {
+		h.HCL.WriteString(fmt.Sprintf("\t%-36s= {\n", "parameters"))
+		// sort keys to have parameters in alphabetical order
+		keys := make([]string, 0, len(h.parameters))
+		for k := range h.parameters {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			v := h.parameters[k]
 			if _, err := strconv.ParseInt(v, 10, 64); err == nil {
 				h.HCL.WriteString(fmt.Sprintf("\t\t%-36s= %s,\n", k, v))
 			} else if b, err := strconv.ParseBool(v); err == nil {
@@ -166,7 +176,7 @@ func (h *Handler) OnEndDocument() error {
 		h.HCL.WriteString(h.ConfigXML.String())
 		h.HCL.WriteString("EOF\n")
 	} else {
-		h.HCL.WriteString(fmt.Sprintf("\t%-40s= \"file://%%s\"\n", "template"))
+		h.HCL.WriteString(fmt.Sprintf("\t%-36s= \"file://%%s\"\n", "template"))
 	}
 	h.HCL.WriteString("}")
 	return nil
